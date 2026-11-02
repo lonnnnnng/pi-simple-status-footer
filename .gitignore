@@ -1,0 +1,4 @@
+node_modules/
+.footer-test-*/
+*.tgz
+.DS_Store
