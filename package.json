@@ -18,6 +18,7 @@
     "footer-theme.default.json",
     "footer-theme.example.json",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE"
   ],
   "pi": {

@@ -1,5 +1,7 @@
 # pi-simple-status-footer
 
+English | [简体中文](README.zh-CN.md)
+
 A small custom footer for the Pi coding agent. It replaces the built-in footer
 with a responsive status line and adds Git change counts plus session duration.
 
