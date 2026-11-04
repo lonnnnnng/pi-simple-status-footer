@@ -5,6 +5,31 @@ English | [简体中文](README.zh-CN.md)
 A small custom footer for the Pi coding agent. It replaces the built-in footer
 with a responsive status line and adds Git change counts and detailed usage metrics.
 
+## npm package and quick start
+
+**npm:** [pi-simple-status-footer](https://www.npmjs.com/package/pi-simple-status-footer)
+
+Install:
+
+```bash
+pi install npm:pi-simple-status-footer
+```
+
+Update:
+
+```bash
+pi update npm:pi-simple-status-footer
+```
+
+Uninstall:
+
+```bash
+pi remove npm:pi-simple-status-footer
+```
+
+After installing or updating, run `/reload` in Pi or restart Pi. After uninstalling,
+restart Pi to unload the footer.
+
 ## Displayed values
 
 - Model ID with a robot icon and provider in parentheses

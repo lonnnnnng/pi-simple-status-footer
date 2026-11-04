@@ -8,6 +8,8 @@
 
 ## 安装与管理
 
+**npm 包地址：** [pi-simple-status-footer](https://www.npmjs.com/package/pi-simple-status-footer)
+
 从 npm 安装：
 
 ```bash
@@ -27,6 +29,7 @@ pi remove npm:pi-simple-status-footer
 ```
 
 安装或更新后，重启 Pi，或者在 Pi 中执行 `/reload`。
+卸载后，重启 Pi 即可停止加载该页脚插件。
 
 ### 从本地目录安装迁移到 npm
 
