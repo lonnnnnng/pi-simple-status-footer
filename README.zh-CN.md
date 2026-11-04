@@ -2,9 +2,9 @@
 
 [English](README.md) | 简体中文
 
-一个适用于 Pi coding agent 的轻量自定义页脚扩展。替换内置页脚，集中显示模型、Token、缓存、费用、上下文、Git 改动和会话耗时，并支持自定义颜色与图标。
+一个适用于 Pi coding agent 的轻量自定义页脚扩展。替换内置页脚，集中显示模型、Token、缓存、费用、上下文和 Git 改动，并支持自定义颜色与图标。
 
-终端宽度不足时，各项指标会自动换行；单项内容过长时会截断显示。
+第一行显示模型、供应商、思考等级、当前目录、Git、上下文百分比与自动压缩标记。第二行显示 `Last` 最近一次请求及 `Total` 会话累计的 Token、缓存、命中率和费用。扩展状态显示在后续行。终端宽度不足时，各区域内部自动换行；单项内容过长时会截断显示。
 
 ## 安装与管理
 
@@ -55,25 +55,32 @@ pi install /path/to/pi-simple-status-footer
 | 思考等级 | 大脑图标后显示当前思考等级，如 `medium`、`high` |
 | 工作目录 | 文件夹图标后显示当前目录；设置了会话名时会一并显示 |
 | Git 状态 | 分支名后显示 `+` 暂存文件数、`~` 未暂存文件数、`?` 未跟踪文件数 |
-| 输入/输出 Token | 向上箭头表示输入 Token，向下箭头表示输出 Token |
-| 缓存读写 | 显示累计缓存读取和写入 Token |
-| 缓存命中率 | 最近一次助手请求的缓存读取 Token 占提示词 Token 的比例 |
-| 费用 | 显示累计费用，例如 `$ 1.234`；适用时附带 `(sub)` 订阅标记 |
-| 上下文 | 显示使用百分比和窗口大小；使用量未知时显示 `?`，开启自动压缩时附带 `(auto)` |
-| 会话耗时 | 显示自会话开始以来的时间 |
+| 会话输入/输出 Token | 整个会话累计的不含缓存读写的输入 Token 和输出 Token；输出已包含提供方计入的思考 Token |
+| 会话总 Token | 整个会话累计的 Token 总量（输入 + 输出 + 缓存读取 + 缓存写入） |
+| 会话缓存读写 | 整个会话累计的缓存读取和写入 Token |
+| 平均缓存命中率 | 整个会话按 Token 加权的缓存命中率 |
+| 最近一次请求 | 历史图标后显示最近一次助手请求的输入/输出/总 Token 和缓存读写 Token；Token 均显示完整整数，不做 k/M 缩写 |
+| 单次缓存命中率 | 最近一次助手请求的缓存读取 Token 占该次提示词 Token 的比例 |
+| 费用 | 累加 Pi 记录的模型费用，例如 `$ 1.234`，不等同于供应商账单；提供方价格缺失时无法反映实际费用，适用时附带 `(sub)` 订阅标记 |
+| 上下文 | 显示 `已用/总量 百分比 (auto)`，用量使用 k/M 缩写；未知时显示 `?`，开启自动压缩时附带 `(auto)` |
 | 扩展状态 | 显示其他扩展发布的状态文字，例如 MCP 连接状态 |
 | 工具数 | 在 MCP 状态右侧显示当前 Pi 激活、声明给模型的工具数量 |
 | 插件数 | 在 MCP 状态右侧显示已配置的插件包数量；一个包可能提供多个扩展模块 |
 
 工具数与插件数跟随非空的 `mcp` 状态显示，没有这条状态时不会单独显示这两个计数。
 
-缓存命中率的计算公式为：
+单次缓存命中率和平均缓存命中率是两个独立指标：
 
 ```text
-cacheRead / (input + cacheRead + cacheWrite) × 100%
+单次命中率 = 单次 cacheRead / (单次 input + 单次 cacheRead + 单次 cacheWrite) × 100%
+平均命中率 = 总 cacheRead / (总 input + 总 cacheRead + 总 cacheWrite) × 100%
 ```
 
-缓存、费用和 Git 等指标会根据当前可用数据按需显示。
+会话累计值来自会话文件中记录的 usage：助手消息、工具结果摘要、压缩/分支摘要以及缓存预热等 `usage` 条目，包含同一文件中已回退的分支。总 Token 按输入、输出、缓存读取、缓存写入四项相加，不再叠加思考 Token。插件无法补出上游未记录的用量。
+
+会话文件是追加式的，上下文压缩只会追加摘要条目，不会删除历史记录，因此累计 Token 不会因压缩而变小。上下文百分比由 Pi 提供，包含估算；压缩后可能先显示 `?`，待后续响应后恢复计算。最近一次请求指最后写入会话文件的助手消息，不包含正在流式生成的响应，也不等于一轮多次工具调用的合计。
+
+单次命中率在会话已有缓存活动且本次完全未命中时显示 `0.0%`；没有任何缓存记录或提示词数量为零时省略。窄屏会将最近一次请求按指标拆分换行，各段重复历史图标以区分累计值。Git 计数是文件数，不是改动行数；同一文件可以同时计入暂存和未暂存。缓存、费用和 Git 等指标会根据当前可用数据按需显示。
 
 ## 自定义主题
 
@@ -118,14 +125,17 @@ cacheRead / (input + cacheRead + cacheWrite) × 100%
 | `path` | 工作目录和会话名称 |
 | `git` | 工作区干净时的 Git 分支和改动计数 |
 | `gitDirty` | 存在文件改动时的 Git 分支和改动计数 |
-| `tokens` | 输入和输出 Token 数量 |
-| `cache` | 缓存读取和写入 Token 数量 |
-| `cachePercent` | 最近一次请求的缓存命中率 |
+| `tokens` | 最近一次请求的历史图标 |
+| `tokenInput` / `tokenOutput` / `tokenTotal` | 分别设置输入、输出、总 Token 的颜色，与旧 `tokens` 配色独立 |
+| `cacheRead` / `cacheWrite` | 分别设置缓存读取、写入的颜色，与旧 `cache` 配色独立 |
+| `lastLabel` / `totalLabel` | 分别设置 Last、Total 标签高亮颜色 |
+| `cache` | 保留的旧主题字段；缓存指标请使用独立颜色字段 |
+| `cachePercent` | 平均缓存命中率和单次缓存命中率 |
 | `cost` | 费用及订阅标记 |
 | `context` | 上下文使用率不超过 70%，或者使用量未知时的显示 |
 | `contextWarn` | 上下文使用率大于 70%、不超过 90% 时的显示 |
 | `contextError` | 上下文使用率大于 90% 时的显示 |
-| `sessionTime` | 会话耗时，以及 MCP 状态旁的工具数和插件数 |
+| `sessionTime` | MCP 状态旁的工具数和插件数 |
 | `separator` | 指标之间的分隔符 `│` |
 | `background` | 页脚和扩展状态行的可选背景色 |
 
@@ -146,7 +156,7 @@ cacheRead / (input + cacheRead + cacheWrite) × 100%
 | `paddingLeft` | 页脚和扩展状态行的左侧缩进 | 0–8 个字符单元，默认 2 |
 | `refreshMs` | Git 状态轮询间隔 | 1000–60000 毫秒，默认 5000 |
 
-`refreshMs` 控制 Git 轮询；会话计时器每秒刷新显示。
+`refreshMs` 控制 Git 状态轮询间隔。
 
 ```json
 {
@@ -180,7 +190,7 @@ cacheRead / (input + cacheRead + cacheWrite) × 100%
   "icons": {
     "mode": "nerd",
     "cacheHit": "✓",
-    "sessionTime": ""
+    "gitBranch": ""
   }
 }
 ```
@@ -195,12 +205,13 @@ cacheRead / (input + cacheRead + cacheWrite) × 100%
 | `context` | 上下文 | `nf-md-chart_donut` |
 | `tokenInput` | 输入 Token | `nf-md-arrow_up_bold` |
 | `tokenOutput` | 输出 Token | `nf-md-arrow_down_bold` |
+| `tokenTotal` | 总 Token | `nf-md-sigma` |
 | `cacheRead` | 缓存读取 | `nf-md-database_arrow_down` |
 | `cacheWrite` | 缓存写入 | `nf-md-database_arrow_up` |
 | `cacheHit` | 缓存命中率 | `nf-md-database_check` |
+| `lastRequest` | 最近一次请求 | `nf-md-history` |
 | `toolCount` | 工具数量 | `nf-md-tools` |
 | `pluginCount` | 插件包数量 | `nf-md-package_variant_closed` |
-| `sessionTime` | 会话耗时 | `nf-md-timer_outline` |
 | `gitBranch` | Git 分支 | `nf-fa-code_branch` |
 
 完整默认字形及其 JSON 写法可参考 [footer-theme.example.json](footer-theme.example.json)。

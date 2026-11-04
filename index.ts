@@ -19,9 +19,9 @@ type ForegroundColor = ThemeColor | HexColor | number;
 type BackgroundColor = ThemeBg | HexColor | number;
 
 type IconName =
-	| "model" | "thinking" | "path" | "context" | "tokenInput" | "tokenOutput"
-	| "cacheRead" | "cacheWrite" | "cacheHit" | "toolCount" | "pluginCount"
-	| "sessionTime" | "gitBranch";
+	| "model" | "thinking" | "path" | "context" | "tokenInput" | "tokenOutput" | "tokenTotal"
+	| "cacheRead" | "cacheWrite" | "cacheHit" | "lastRequest" | "toolCount" | "pluginCount"
+	| "gitBranch";
 type FooterIcons = Record<IconName, string>;
 
 type FooterTheme = {
@@ -35,6 +35,13 @@ type FooterTheme = {
 	contextWarn: ForegroundColor;
 	contextError: ForegroundColor;
 	tokens: ForegroundColor;
+	tokenInput: ForegroundColor;
+	tokenOutput: ForegroundColor;
+	tokenTotal: ForegroundColor;
+	lastLabel: ForegroundColor;
+	totalLabel: ForegroundColor;
+	cacheRead: ForegroundColor;
+	cacheWrite: ForegroundColor;
 	cache: ForegroundColor;
 	cachePercent: ForegroundColor;
 	cost: ForegroundColor;
@@ -59,12 +66,13 @@ const NERD_ICONS: FooterIcons = {
 	context: "\u{F07AF}",
 	tokenInput: "\u{F0737}",
 	tokenOutput: "\u{F072E}",
+	tokenTotal: "\u{F04A0}",
 	cacheRead: "\u{F163B}",
 	cacheWrite: "\u{F163E}",
 	cacheHit: "\u{F0AA9}",
+	lastRequest: "\u{F02DA}",
 	toolCount: "\u{F1064}",
 	pluginCount: "\u{F03D7}",
-	sessionTime: "\u{F051B}",
 	gitBranch: "\uF126",
 };
 
@@ -76,7 +84,7 @@ const DEFAULT_THEME_OPTIONS: Pick<FooterTheme, "icons" | "paddingLeft" | "refres
 };
 const THEME_COLOR_KEYS = [
 	"provider", "model", "thinking", "path", "git", "gitDirty", "context", "contextWarn",
-	"contextError", "tokens", "cache", "cachePercent", "cost", "sessionTime", "separator",
+	"contextError", "tokens", "tokenInput", "tokenOutput", "tokenTotal", "lastLabel", "totalLabel", "cacheRead", "cacheWrite", "cache", "cachePercent", "cost", "sessionTime", "separator",
 ] as const satisfies readonly (keyof FooterTheme)[];
 type ThemeColorKey = (typeof THEME_COLOR_KEYS)[number];
 
@@ -143,12 +151,13 @@ const ASCII_ICONS: FooterIcons = {
 	context: "",
 	tokenInput: "↑",
 	tokenOutput: "↓",
+	tokenTotal: "Σ",
 	cacheRead: "R",
 	cacheWrite: "W",
 	cacheHit: "%",
+	lastRequest: "L",
 	toolCount: "T",
 	pluginCount: "P",
-	sessionTime: "",
 	gitBranch: "",
 };
 
@@ -207,6 +216,7 @@ function createDefaultTheme(value: unknown): FooterTheme {
 }
 
 function applyThemeOverrides(theme: FooterTheme, input: Record<string, unknown>): FooterTheme {
+	// Metric colors remain independent of the older group/label colors.
 	for (const key of THEME_COLOR_KEYS) {
 		if (isForegroundColor(input[key])) theme[key] = input[key];
 	}
@@ -245,14 +255,8 @@ function formatTokens(count: number): string {
 	return `${Math.round(count / 1_000_000)}M`;
 }
 
-function formatDuration(milliseconds: number): string {
-	const totalSeconds = Math.max(0, Math.floor(milliseconds / 1_000));
-	const hours = Math.floor(totalSeconds / 3_600);
-	const minutes = Math.floor((totalSeconds % 3_600) / 60);
-	const seconds = totalSeconds % 60;
-	return hours > 0
-		? `${hours}h${String(minutes).padStart(2, "0")}m`
-		: `${minutes}m${String(seconds).padStart(2, "0")}s`;
+function formatExactTokens(count: number): string {
+	return `${Math.round(count)}`;
 }
 
 function formatPath(path: string): string {
@@ -272,6 +276,7 @@ function parseGitStatus(output: string): GitCounts {
 		if (line.length < 2) continue;
 		const indexStatus = line[0];
 		const worktreeStatus = line[1];
+		if (indexStatus === "!") continue;
 		if (indexStatus === "?") {
 			counts.untracked++;
 			continue;
@@ -282,12 +287,17 @@ function parseGitStatus(output: string): GitCounts {
 	return counts;
 }
 
+// Pi's normalized input excludes cache reads/writes; reasoning is already in output.
+function getTotalTokens(usage: Usage): number {
+	return usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+}
+
 function addUsage(total: Usage, usage: Usage): void {
 	total.input += usage.input;
 	total.output += usage.output;
 	total.cacheRead += usage.cacheRead;
 	total.cacheWrite += usage.cacheWrite;
-	total.totalTokens += usage.totalTokens;
+	total.totalTokens += getTotalTokens(usage);
 	total.cost.input += usage.cost.input;
 	total.cost.output += usage.cost.output;
 	total.cost.cacheRead += usage.cost.cacheRead;
@@ -295,7 +305,19 @@ function addUsage(total: Usage, usage: Usage): void {
 	total.cost.total += usage.cost.total;
 }
 
-function getSessionUsage(entries: SessionEntry[]): { usage: Usage; latestCacheHitRate?: number } {
+function getCacheHitRate(usage: Usage): number | undefined {
+	const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+	return promptTokens > 0 ? (usage.cacheRead / promptTokens) * 100 : undefined;
+}
+
+type SessionUsage = {
+	usage: Usage;
+	cacheHitRate?: number;
+	lastUsage?: Usage;
+	lastCacheHitRate?: number;
+};
+
+function getSessionUsage(entries: SessionEntry[]): SessionUsage {
 	const usage: Usage = {
 		input: 0,
 		output: 0,
@@ -304,7 +326,7 @@ function getSessionUsage(entries: SessionEntry[]): { usage: Usage; latestCacheHi
 		totalTokens: 0,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
-	let latestCacheHitRate: number | undefined;
+	let lastUsage: Usage | undefined;
 
 	for (const entry of entries) {
 		let entryUsage: Usage | undefined;
@@ -312,8 +334,7 @@ function getSessionUsage(entries: SessionEntry[]): { usage: Usage; latestCacheHi
 			entryUsage = entry.usage;
 		} else if (entry.type === "message" && entry.message.role === "assistant") {
 			entryUsage = entry.message.usage;
-			const promptTokens = entryUsage.input + entryUsage.cacheRead + entryUsage.cacheWrite;
-			latestCacheHitRate = promptTokens > 0 ? (entryUsage.cacheRead / promptTokens) * 100 : undefined;
+			lastUsage = entryUsage;
 		} else if (entry.type === "message" && entry.message.role === "toolResult") {
 			entryUsage = entry.message.usage;
 		} else if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
@@ -321,7 +342,13 @@ function getSessionUsage(entries: SessionEntry[]): { usage: Usage; latestCacheHi
 		}
 		if (entryUsage) addUsage(usage, entryUsage);
 	}
-	return { usage, latestCacheHitRate };
+
+	return {
+		usage,
+		cacheHitRate: getCacheHitRate(usage),
+		lastUsage,
+		lastCacheHitRate: lastUsage ? getCacheHitRate(lastUsage) : undefined,
+	};
 }
 
 function colorText(theme: Theme, color: ForegroundColor, text: string): string {
@@ -338,11 +365,11 @@ function backgroundText(theme: Theme, color: BackgroundColor, text: string): str
 	return theme.bg(color, text);
 }
 
-function wrapSegments(segments: string[], width: number, separator: string): string[] {
+function wrapSegments(segments: string[], width: number, separator: string, gap = ` ${separator} `): string[] {
 	const rows: string[] = [];
 	let row = "";
 	for (const segment of segments) {
-		const candidate = row ? `${row} ${separator} ${segment}` : segment;
+		const candidate = row ? `${row}${gap}${segment}` : segment;
 		if (visibleWidth(candidate) <= width) {
 			row = candidate;
 			continue;
@@ -356,28 +383,18 @@ function wrapSegments(segments: string[], width: number, separator: string): str
 
 export default function (pi: ExtensionAPI): void {
 	let currentContext: ExtensionContext | undefined;
-	let clockInterval: ReturnType<typeof setInterval> | undefined;
 	let gitInterval: ReturnType<typeof setInterval> | undefined;
 	let refreshGit: (() => void) | undefined;
 	let refreshFooter: (() => void) | undefined;
 	let gitRefreshInFlight = false;
 	let gitCounts: GitCounts = { staged: 0, unstaged: 0, untracked: 0 };
-	let sessionStartedAt = Date.now();
 	let sessionId = "";
-
-	function getSessionStartTime(context: ExtensionContext): number {
-		const timestamp = context.sessionManager.getHeader()?.timestamp;
-		if (!timestamp) return Date.now();
-		const parsed = Date.parse(timestamp);
-		return Number.isFinite(parsed) ? parsed : Date.now();
-	}
 
 	function updateContext(context: ExtensionContext): void {
 		currentContext = context;
 		const nextSessionId = context.sessionManager.getSessionId();
 		if (nextSessionId !== sessionId) {
 			sessionId = nextSessionId;
-			sessionStartedAt = getSessionStartTime(context);
 			gitCounts = { staged: 0, unstaged: 0, untracked: 0 };
 		}
 		void refreshGit?.();
@@ -408,15 +425,22 @@ export default function (pi: ExtensionAPI): void {
 		currentContext = context;
 		refreshFooter?.();
 	});
+	// message_end runs before persistence; turn_end sees the appended usage entries.
+	pi.on("turn_end", (_event, context) => {
+		currentContext = context;
+		refreshFooter?.();
+	});
 	pi.on("agent_end", (_event, context) => {
+		currentContext = context;
+		refreshFooter?.();
+	});
+	pi.on("session_compact", (_event, context) => {
 		currentContext = context;
 		refreshFooter?.();
 	});
 
 	pi.on("session_shutdown", () => {
-		if (clockInterval) clearInterval(clockInterval);
 		if (gitInterval) clearInterval(gitInterval);
-		clockInterval = undefined;
 		gitInterval = undefined;
 		refreshGit = undefined;
 		refreshFooter = undefined;
@@ -495,36 +519,74 @@ export default function (pi: ExtensionAPI): void {
 				if (branch) {
 					segments.push(part(dirty ? config.gitDirty : config.git, `${iconPrefix(icons.gitBranch)}${branch} +${gitCounts.staged} ~${gitCounts.unstaged} ?${gitCounts.untracked}`));
 				}
+				const totalSegments: string[] = [];
+				const requestSegments: string[] = [];
 				if (usage.input || usage.output) {
-					segments.push(part(config.tokens, `${iconPrefix(icons.tokenInput)}${formatTokens(usage.input)} ${iconPrefix(icons.tokenOutput)}${formatTokens(usage.output)}`));
+					totalSegments.push(part(config.tokenInput, `${iconPrefix(icons.tokenInput)}${formatTokens(usage.input)}`));
+					totalSegments.push(part(config.tokenOutput, `${iconPrefix(icons.tokenOutput)}${formatTokens(usage.output)}`));
+				}
+				if (usage.totalTokens) {
+					totalSegments.push(part(config.tokenTotal, `${iconPrefix(icons.tokenTotal)}${formatTokens(usage.totalTokens)}`));
 				}
 				if (usage.cacheRead || usage.cacheWrite) {
-					segments.push(part(config.cache, `${iconPrefix(icons.cacheRead)}${formatTokens(usage.cacheRead)} ${iconPrefix(icons.cacheWrite)}${formatTokens(usage.cacheWrite)}`));
-					if (sessionUsage.latestCacheHitRate !== undefined) {
-						segments.push(part(config.cachePercent, `${iconPrefix(icons.cacheHit)}${sessionUsage.latestCacheHitRate.toFixed(1)}%`));
+					totalSegments.push(part(config.cacheRead, `${iconPrefix(icons.cacheRead)}${formatTokens(usage.cacheRead)}`));
+					totalSegments.push(part(config.cacheWrite, `${iconPrefix(icons.cacheWrite)}${formatTokens(usage.cacheWrite)}`));
+					if (sessionUsage.cacheHitRate !== undefined) {
+						totalSegments.push(part(config.cachePercent, `${iconPrefix(icons.cacheHit)}avg ${sessionUsage.cacheHitRate.toFixed(1)}%`));
+					}
+				}
+				const last = sessionUsage.lastUsage;
+				if (last) {
+					const prefix = iconPrefix(icons.lastRequest);
+					const lastParts = [
+						part(config.tokenInput, `${iconPrefix(icons.tokenInput)}${formatExactTokens(last.input)}`),
+						part(config.tokenOutput, `${iconPrefix(icons.tokenOutput)}${formatExactTokens(last.output)}`),
+						part(config.tokenTotal, `${iconPrefix(icons.tokenTotal)}${formatExactTokens(getTotalTokens(last))}`),
+						part(config.cacheRead, `${iconPrefix(icons.cacheRead)}${formatExactTokens(last.cacheRead)}`),
+						part(config.cacheWrite, `${iconPrefix(icons.cacheWrite)}${formatExactTokens(last.cacheWrite)}`),
+					];
+					// A zero-read request after earlier cache activity is a 0% hit, not missing data.
+					if ((usage.cacheRead || usage.cacheWrite) && sessionUsage.lastCacheHitRate !== undefined) {
+						lastParts.push(part(config.cachePercent, `${iconPrefix(icons.cacheHit)}${sessionUsage.lastCacheHitRate.toFixed(1)}%`));
+					}
+					const lastSegment = part(config.tokens, prefix) + lastParts.join("   ");
+					if (visibleWidth(lastSegment) + "Last ".length <= width - Math.min(config.paddingLeft, width - 1)) {
+						requestSegments.push(lastSegment);
+					} else {
+						requestSegments.push(...lastParts.map(text => part(config.tokens, prefix) + text));
 					}
 				}
 				const subscription = model
-					? model.provider === "kimi-coding" || ctx.modelRegistry.isUsingOAuth(model)
+					? model.provider === "kimi-coding" || (
+						ctx.modelRegistry.isUsingOAuth(model) &&
+						ctx.modelRegistry.getProvider(model.provider)?.auth?.oauth?.isSubscription === true
+					)
 					: false;
-				if (usage.cost.total || subscription) {
-					segments.push(part(config.cost, `$ ${usage.cost.total.toFixed(3)}${subscription ? " (sub)" : ""}`));
-				}
+				const costSegment = usage.cost.total || subscription
+					? part(config.cost, `$ ${usage.cost.total.toFixed(3)}${subscription ? " (sub)" : ""}`)
+					: undefined;
 
 				const settings = pi.getSettings();
 				const autoCompactEnabled = settings.compaction?.enabled !== false;
 				const autoSuffix = autoCompactEnabled ? " (auto)" : "";
+				const contextSize = `${contextUsage?.tokens == null ? "?" : formatTokens(contextUsage.tokens)}/${formatTokens(contextWindow)}`;
 				if (contextPercent === null || contextPercent === undefined) {
-					segments.push(part(config.context, `${iconPrefix(icons.context)}?/${formatTokens(contextWindow)}${autoSuffix}`));
+					segments.push(part(config.context, `${iconPrefix(icons.context)}${contextSize}${autoSuffix}`));
 				} else {
 					const contextColor = contextPercent > 90 ? config.contextError : contextPercent > 70 ? config.contextWarn : config.context;
-					segments.push(part(contextColor, `${iconPrefix(icons.context)}${contextPercent.toFixed(1)}%/${formatTokens(contextWindow)}${autoSuffix}`));
+					segments.push(part(contextColor, `${iconPrefix(icons.context)}${contextSize} ${contextPercent.toFixed(1)}%${autoSuffix}`));
 				}
-				segments.push(part(config.sessionTime, `${iconPrefix(icons.sessionTime)}${formatDuration(Date.now() - sessionStartedAt)}`));
-
 				const padding = " ".repeat(Math.min(config.paddingLeft, width - 1));
 				const contentWidth = width - padding.length;
 				const rows = wrapSegments(segments, contentWidth, separator);
+				// Keep model/context information above usage, even when both fit on one row.
+				if (requestSegments.length > 0) requestSegments[0] = part(config.lastLabel, "Last ") + requestSegments[0];
+				if (totalSegments.length > 0) {
+					totalSegments[0] = (requestSegments.length > 0 ? `${separator}   ` : "") + part(config.totalLabel, "Total ") + totalSegments[0];
+				}
+				const usageSegments = [...requestSegments, ...totalSegments];
+				if (costSegment) usageSegments.push((usageSegments.length > 0 ? `${separator}   ` : "") + costSegment);
+				rows.push(...wrapSegments(usageSegments, contentWidth, "", "   "));
 				const toolCount = pi.getActiveTools().length;
 				const pluginPackageCount = settings.packages?.length ?? 0;
 				const extensionStatuses = [...footerData.getExtensionStatuses().entries()]
@@ -547,11 +609,7 @@ export default function (pi: ExtensionAPI): void {
 			};
 		});
 
-		if (clockInterval) clearInterval(clockInterval);
 		if (gitInterval) clearInterval(gitInterval);
-		clockInterval = setInterval(() => {
-			refreshFooter?.();
-		}, 1000);
 		gitInterval = setInterval(() => {
 			void refreshGit?.();
 		}, config.refreshMs);

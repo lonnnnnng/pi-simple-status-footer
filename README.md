@@ -3,7 +3,7 @@
 English | [简体中文](README.zh-CN.md)
 
 A small custom footer for the Pi coding agent. It replaces the built-in footer
-with a responsive status line and adds Git change counts plus session duration.
+with a responsive status line and adds Git change counts and detailed usage metrics.
 
 ## Displayed values
 
@@ -11,22 +11,67 @@ with a responsive status line and adds Git change counts plus session duration.
 - Thinking level behind a brain icon
 - Working directory and session name with a folder icon
 - Git branch with branch icon, staged, unstaged, and untracked counts
-- Input and output tokens with up/down arrows
-- Cache read/write tokens and cache hit percentage behind icons
+- Session-total input and output tokens with up/down arrows
+- Session-total token count (input + output + cache read + cache write) behind a sigma icon
+- Session-total cache read/write tokens and weighted average cache hit percentage behind icons
+- Latest assistant request behind a history icon, with its own input/output/total
+  tokens, cache read/write tokens, and single-request cache hit percentage; these
+  values are shown as exact integers without k/M abbreviation
 - Cost and subscription marker when applicable
 - Context percentage, context window, and automatic compaction marker with a usage icon
-- Session duration behind a clock icon
 - Status values published by other extensions
 - Active Pi tool count and configured plugin-package count beside the MCP status
 
-The footer wraps segments onto additional rows when the terminal is narrow.
+Unprefixed token and cache values are session totals summed over every billable
+session entry (assistant messages, tool-result summaries, compaction/branch
+summaries, and `usage` entries such as cache warming). The history-prefixed
+group shows only the latest assistant request. The two cache hit percentages are
+independent metrics:
+
+```text
+single request = request cacheRead / (request input + request cacheRead + request cacheWrite) × 100%
+session average = total cacheRead / (total input + total cacheRead + total cacheWrite) × 100%
+```
+
+The session file is append-only. Compaction appends a summary entry without
+removing earlier usage records, so session totals do not shrink after
+compaction. Context usage comes from Pi and includes estimates; it may be unknown
+immediately after compaction until a later assistant response.
+
+`input` excludes cache reads and writes. Output already includes any reported
+reasoning tokens. Total tokens are computed from input + output + cache read +
+cache write, without adding reasoning a second time. Only recorded usage can be
+counted, including abandoned branches in the same session file. The latest
+request is the last persisted assistant message, not a live streaming response
+or an entire multi-request tool turn. On narrow terminals its metrics wrap
+individually, repeating the history icon. A complete miss after earlier cache
+activity displays 0.0%; without cache history or prompt tokens the rate is omitted.
+
+Cost sums Pi's recorded model pricing estimates, not the provider's invoice;
+missing pricing cannot establish actual charges. OAuth authentication alone does
+not imply a subscription. Git counts files rather than changed lines; one file
+can count as both staged and unstaged. Plugins counts configured package entries,
+not successfully loaded extensions.
+
+The first row contains model/provider, thinking level, directory, Git and context
+usage with the automatic compaction marker. The second row contains `Last`
+request and `Total` session usage, cache hit rates and cost. Extension statuses
+follow below. Each region wraps onto additional rows when the terminal is narrow.
+Context is shown as `used/limit percent (auto)` with abbreviated token counts.
+The usage row uses three-space gaps within groups and vertical bars between
+`Last`, `Total`, and cost. The two labels have separate highlight colors.
+Input, output, total,
+cache read, cache write and hit rate have distinct default colors. Override
+`tokenInput`, `tokenOutput`, `tokenTotal`, `cacheRead` and `cacheWrite` individually;
+`lastLabel` and `totalLabel` control the labels. The older `tokens` and `cache`
+colors no longer override individual metrics, preserving their distinction.
 
 ## Icons
 
 Icons default to Nerd Font glyphs: `nf-md-robot_outline`, `nf-md-brain`,
 `nf-md-folder_outline`, `nf-md-chart_donut`, `nf-md-arrow_up_bold`,
-`nf-md-arrow_down_bold`, `nf-md-database_arrow_down`, `nf-md-database_arrow_up`,
-`nf-md-database_check`, `nf-md-tools`, `nf-md-package_variant_closed`, `nf-md-timer_outline`, and `nf-fa-code_branch`.
+`nf-md-arrow_down_bold`, `nf-md-sigma`, `nf-md-database_arrow_down`, `nf-md-database_arrow_up`,
+`nf-md-database_check`, `nf-md-history`, `nf-md-tools`, `nf-md-package_variant_closed`, and `nf-fa-code_branch`.
 If your terminal font does not include Nerd Font glyphs, switch to the ASCII
 set with `"icons": "ascii"` in the theme config, or replace individual glyphs
 with an object:
@@ -41,12 +86,13 @@ with an object:
     "context": "\uDB81\uDFAF",
     "tokenInput": "\uDB81\uDF37",
     "tokenOutput": "\uDB81\uDF2E",
+    "tokenTotal": "\uDB81\uDCA0",
     "cacheRead": "\uDB85\uDE3B",
     "cacheWrite": "\uDB85\uDE3E",
     "cacheHit": "\uDB82\uDEA9",
+    "lastRequest": "\uDB80\uDEDA",
     "toolCount": "\uDB84\uDC64",
     "pluginCount": "\uDB80\uDFD7",
-    "sessionTime": "\uDB81\uDD1B",
     "gitBranch": "\uF126"
   }
 }
@@ -132,14 +178,17 @@ continues to use the package defaults. Alternatively, copy
 | `path` | Working directory and optional session name |
 | `git` | Git branch and change counts when the worktree is clean |
 | `gitDirty` | Git branch and change counts when there are changes |
-| `tokens` | Input and output token counts |
-| `cache` | Cache-read and cache-write token counts |
-| `cachePercent` | Latest request's cache-hit percentage |
+| `tokens` | Latest-request history icon |
+| `tokenInput` / `tokenOutput` / `tokenTotal` | Input, output, and total token counts in both groups |
+| `cacheRead` / `cacheWrite` | Cache-read and cache-write token counts in both groups |
+| `lastLabel` / `totalLabel` | Last and Total label highlights |
+| `cache` | Legacy theme field; use individual cache metric colors |
+| `cachePercent` | Session average and single-request cache-hit percentages |
 | `cost` | Accumulated cost and the subscription marker |
 | `context` | Context usage up to 70%, and unknown usage |
 | `contextWarn` | Context usage above 70%, up to 90% |
 | `contextError` | Context usage above 90% |
-| `sessionTime` | Session duration and tool/plugin counts beside the MCP row |
+| `sessionTime` | Tool and plugin counts beside the MCP row |
 | `separator` | Separator between footer indicators |
 | `background` | Optional background for footer and extension-status rows |
 
